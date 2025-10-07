@@ -4,13 +4,13 @@ from discord.ext import commands
 import yt_dlp
 import asyncio
 
-# โค้ดบอทของคุณ (ใช้โค้ดเดิมที่ให้ไป)
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix='!', intents=intents)
+# ตั้งค่า FFmpeg options
+ffmpeg_options = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
+    'options': '-vn'
+}
 
-queues = {}
-
-# yt-dlp configuration
+# ตั้งค่า yt-dlp
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
@@ -25,12 +25,13 @@ ytdl_format_options = {
     'source_address': '0.0.0.0'
 }
 
-ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
-}
-
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+
+# Bot setup
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+queues = {}
 
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
@@ -61,6 +62,12 @@ async def on_ready():
     print(f'✅ {bot.user} has logged in!')
     print(f'✅ Bot is in {len(bot.guilds)} servers')
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="!play"))
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    print(f"Error: {error}")
 
 @bot.command()
 async def join(ctx):
@@ -165,10 +172,24 @@ async def ping(ctx):
     """ทดสอบการตอบสนอง"""
     await ctx.send(f'🏓 Pong! {round(bot.latency * 1000)}ms')
 
+@bot.command()
+async def volume(ctx, volume: int):
+    """ปรับระดับเสียง (0-100)"""
+    if ctx.voice_client is None:
+        return await ctx.send("ไม่ได้เชื่อมต่อกับช่องเสียง")
+    
+    if 0 <= volume <= 100:
+        if ctx.voice_client.source:
+            ctx.voice_client.source.volume = volume / 100
+        await ctx.send(f"🔊 ตั้งค่าระดับเสียงเป็น {volume}%")
+    else:
+        await ctx.send("กรุณาใส่ตัวเลขระหว่าง 0-100")
+
 if __name__ == "__main__":
-    # ใช้ environment variable บน Railway
     token = os.environ.get('DISCORD_TOKEN')
     if not token:
         print("❌ ตั้งค่า DISCORD_TOKEN ใน Environment Variables")
+        print("💡 ไปที่ Railway Dashboard → Variables → Add DISCORD_TOKEN")
     else:
+        print("🚀 Starting Discord Music Bot...")
         bot.run(token)
