@@ -299,7 +299,7 @@ async def on_command_error(ctx, error):
         return
     print(f"Error: {error}")
 
-# Bot commands (keep your existing commands the same)
+# Bot commands
 @bot.command()
 async def join(ctx):
     """Join voice channel"""
@@ -408,7 +408,149 @@ async def instances(ctx):
                         0x0099ff)
     await ctx.send(embed=embed)
 
-# ... keep all your other commands the same (pause, resume, stop, skip, queue, leave, ping, volume, nowplaying, help_bot)
+@bot.command()
+async def pause(ctx):
+    """หยุดเพลงชั่วคราว"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.pause()
+        embed = create_embed("⏸️ หยุดชั่วคราว", "เพลงถูกหยุดชั่วคราวแล้ว ใช้ `!resume` เพื่อเล่นต่อ", 0xffa500)
+        await ctx.send(embed=embed)
+    else:
+        embed = create_embed("❌ ข้อผิดพลาด", "ไม่มีเพลงที่กำลังเล่นอยู่", 0xff0000)
+        await ctx.send(embed=embed)
+
+@bot.command()
+async def resume(ctx):
+    """เล่นเพลงต่อ"""
+    if ctx.voice_client and ctx.voice_client.is_paused():
+        ctx.voice_client.resume()
+        embed = create_embed("▶️ เล่นต่อ", "เพลงกำลังเล่นต่อแล้ว! 🎶", 0x00ff00)
+        await ctx.send(embed=embed)
+    else:
+        embed = create_embed("❌ ข้อผิดพลาด", "ไม่มีเพลงที่ถูกหยุดชั่วคราว", 0xff0000)
+        await ctx.send(embed=embed)
+
+@bot.command()
+async def stop(ctx):
+    """หยุดเพลงและล้างคิว"""
+    if ctx.voice_client:
+        if ctx.voice_client.is_playing():
+            ctx.voice_client.stop()
+    
+    guild_id = ctx.guild.id
+    if guild_id in queues:
+        queues[guild_id] = []
+    
+    embed = create_embed("⏹️ หยุดเพลง", "เพลงถูกหยุดและคิวถูกล้างเรียบร้อยแล้ว", 0xff0000)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def skip(ctx):
+    """ข้ามเพลงปัจจุบัน"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        ctx.voice_client.stop()
+        embed = create_embed("⏭️ ข้ามเพลง", "ข้ามเพลงปัจจุบันเรียบร้อยแล้ว!", 0x00ff00)
+        await ctx.send(embed=embed)
+        check_queue(ctx, ctx.guild.id)
+    else:
+        embed = create_embed("❌ ข้อผิดพลาด", "ไม่มีเพลงที่กำลังเล่นอยู่", 0xff0000)
+        await ctx.send(embed=embed)
+
+@bot.command()
+async def queue(ctx):
+    """แสดงคิวเพลง"""
+    guild_id = ctx.guild.id
+    if guild_id in queues and queues[guild_id]:
+        queue_list = "\n".join([f"**{i+1}.** {song.title}" for i, song in enumerate(queues[guild_id])])
+        if len(queue_list) > 2000:
+            queue_list = queue_list[:1997] + "..."
+        
+        embed = create_embed("📋 คิวเพลง", f"มี {len(queues[guild_id])} เพลงในคิว:\n\n{queue_list}", 0x0099ff)
+        await ctx.send(embed=embed)
+    else:
+        embed = create_embed("📋 คิวเพลง", "❌ ไม่มีเพลงในคิว", 0xff0000)
+        await ctx.send(embed=embed)
+
+@bot.command()
+async def leave(ctx):
+    """ออกจากช่องเสียง"""
+    if ctx.voice_client:
+        await ctx.voice_client.disconnect()
+        embed = create_embed("👋 ออกจากช่องเสียง", "บอทได้ออกจากช่องเสียงแล้ว ขอบคุณที่ใช้บริการ! 🎵", 0x00ff00)
+        await ctx.send(embed=embed)
+        
+        guild_id = ctx.guild.id
+        if guild_id in queues:
+            del queues[guild_id]
+    else:
+        embed = create_embed("❌ ข้อผิดพลาด", "บอทไม่ได้อยู่ในช่องเสียง", 0xff0000)
+        await ctx.send(embed=embed)
+
+@bot.command()
+async def ping(ctx):
+    """ทดสอบการตอบสนอง"""
+    latency = round(bot.latency * 1000)
+    embed = create_embed("🏓 Pong!", f"ความเร็วในการตอบสนอง: **{latency}ms**\n\nบอททำงานปกติ! ✅", 0x00ff00)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def volume(ctx, volume: int):
+    """ปรับระดับเสียง (0-100)"""
+    if ctx.voice_client is None:
+        embed = create_embed("❌ ข้อผิดพลาด", "ไม่ได้เชื่อมต่อกับช่องเสียง", 0xff0000)
+        return await ctx.send(embed=embed)
+    
+    if 0 <= volume <= 100:
+        if ctx.voice_client.source:
+            ctx.voice_client.source.volume = volume / 100
+        embed = create_embed("🔊 ระดับเสียง", f"ตั้งค่าระดับเสียงเป็น **{volume}%** แล้ว", 0x00ff00)
+        await ctx.send(embed=embed)
+    else:
+        embed = create_embed("❌ ข้อผิดพลาด", "กรุณาใส่ตัวเลขระหว่าง 0-100", 0xff0000)
+        await ctx.send(embed=embed)
+
+@bot.command()
+async def nowplaying(ctx):
+    """แสดงเพลงที่กำลังเล่นอยู่"""
+    if ctx.voice_client and ctx.voice_client.is_playing():
+        if hasattr(ctx.voice_client.source, 'title'):
+            title = ctx.voice_client.source.title
+        else:
+            title = "Unknown Title"
+            
+        embed = create_embed("🎵 กำลังเล่นอยู่", 
+                            f"**{title}**\n\nใช้ `!queue` เพื่อดูคิวเพลง", 0x00ff00)
+        await ctx.send(embed=embed)
+    else:
+        embed = create_embed("🎵 กำลังเล่นอยู่", "❌ ไม่มีเพลงที่กำลังเล่นอยู่", 0xff0000)
+        await ctx.send(embed=embed)
+
+@bot.command()
+async def help_bot(ctx):
+    """แสดงคำสั่งทั้งหมด"""
+    commands_list = """
+**🎵 คำสั่งเพลง:**
+`!play [ชื่อเพลง/ลิงก์]` - เล่นเพลงจาก YouTube
+`!pause` - หยุดเพลงชั่วคราว
+`!resume` - เล่นเพลงต่อ
+`!stop` - หยุดและล้างคิว
+`!skip` - ข้ามเพลงปัจจุบัน
+`!queue` - แสดงคิวเพลง
+`!volume [0-100]` - ปรับระดับเสียง
+`!nowplaying` - แสดงเพลงที่กำลังเล่น
+`!status` - แสดงสถานะบอท
+`!instances` - แสดง Invidious instances
+
+**🔊 คำสั่งเสียง:**
+`!join` - เข้าร่วมช่องเสียง
+`!leave` - ออกจากช่องเสียง
+
+**ℹ️ คำสั่งข้อมูล:**
+`!ping` - ทดสอบการตอบสนอง
+`!help_bot` - แสดงคำสั่งทั้งหมด
+"""
+    embed = create_embed("🤖 คำสั่งบอท", commands_list, 0x0099ff)
+    await ctx.send(embed=embed)
 
 # Run bot
 if __name__ == "__main__":
