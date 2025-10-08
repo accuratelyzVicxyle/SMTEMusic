@@ -1,12 +1,9 @@
 import os
 import discord
 from discord.ext import commands
-import yt_dlp
 import asyncio
 import aiohttp
-import json
 import random
-import time
 
 # Bot setup
 intents = discord.Intents.all()
@@ -30,59 +27,6 @@ ffmpeg_options = {
     'options': '-vn -c:a libopus -b:a 128k -f opus'
 }
 
-# Latest yt-dlp configuration for October 2024
-ytdl_format_options = {
-    'format': 'bestaudio/best',
-    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
-    'restrictfilenames': True,
-    'noplaylist': True,
-    'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'logtostderr': False,
-    'quiet': True,
-    'no_warnings': True,
-    'default_search': 'auto',
-    'source_address': '0.0.0.0',
-    
-    # Critical fixes for YouTube
-    'extract_flat': False,
-    'socket_timeout': 30,
-    'retries': 15,
-    'fragment_retries': 15,
-    'skip_unavailable_fragments': True,
-    'keep_fragments': True,
-    
-    # Updated user agent and headers
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    
-    'http_headers': {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-    },
-    
-    # YouTube specific fixes
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['android', 'web', 'ios'],
-            'player_skip': ['configs', 'webpage', 'js'],
-        }
-    },
-    
-    # Force specific formats to avoid issues
-    'format_sort': ['res:720', 'ext:mp4:m4a', 'acodec:mp3'],
-    'prefer_free_formats': True,
-    
-    # Additional YouTube parameters
-    'youtube_include_dash_manifest': False,
-    'youtube_include_hls_manifest': False,
-}
-
-ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
-
 # Embed creation function with LARGE IMAGE
 def create_embed(title, description, color=0x00ff00, show_large_image=True):
     """Create embed message with LARGE image (not thumbnail)"""
@@ -100,61 +44,142 @@ def create_embed(title, description, color=0x00ff00, show_large_image=True):
     embed.set_footer(text="Music Bot • Made with ❤️")
     return embed
 
-# Simple YouTube audio extraction using yt-dlp only
-async def get_youtube_audio_simple(query):
-    """Simple method using only yt-dlp with latest fixes"""
-    try:
-        print(f"🎵 Attempting to play: {query}")
-        
-        # Try direct extraction first
-        try:
-            loop = asyncio.get_event_loop()
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
-            
-            if 'entries' in data:
-                data = data['entries'][0]
-            
-            if data and data.get('url'):
-                print(f"✅ Successfully extracted audio URL")
-                return {
-                    'url': data['url'],
-                    'title': data.get('title', 'Unknown Title'),
-                    'duration': data.get('duration', 0),
-                    'webpage_url': data.get('webpage_url', ''),
-                    'method': 'yt-dlp'
-                }
-        except Exception as e:
-            print(f"❌ Direct extraction failed: {str(e)}")
-            
-            # Try with ytsearch fallback
-            try:
-                loop = asyncio.get_event_loop()
-                data = await loop.run_in_executor(None, lambda: ytdl.extract_info(f"ytsearch:{query}", download=False))
-                
-                if 'entries' in data and data['entries']:
-                    data = data['entries'][0]
-                    
-                    if data and data.get('url'):
-                        print(f"✅ Success with ytsearch fallback")
-                        return {
-                            'url': data['url'],
-                            'title': data.get('title', 'Unknown Title'),
-                            'duration': data.get('duration', 0),
-                            'webpage_url': data.get('webpage_url', ''),
-                            'method': 'yt-dlp (search)'
-                        }
-            except Exception as e2:
-                print(f"❌ ytsearch also failed: {str(e2)}")
-                raise Exception(f"All extraction methods failed")
-        
-        return None
-        
-    except Exception as e:
-        print(f"❌ Complete failure: {str(e)}")
-        raise e
+# Working Invidious instances (tested October 2024)
+async def get_working_invidious_instances():
+    """Get list of currently working Invidious instances"""
+    return [
+        "https://invidious.private.coffee",
+        "https://invidious.perennialte.ch", 
+        "https://yt.artemislena.eu",
+        "https://invidious.slipfox.xyz",
+        "https://invidious.privacydev.net",
+        "https://invidious.namazso.eu",
+        "https://invidious.drgns.space",
+        "https://iv.melmac.space",
+        "https://invidious.protokolla.fi",
+        "https://yewtu.be",
+        "https://invidious.projectsegfau.lt",
+        "https://invidious.snopyta.org"
+    ]
 
-# Audio source class
-class YTDLSource(discord.PCMVolumeTransformer):
+# Extract video ID from YouTube URL
+def extract_video_id(query):
+    """Extract video ID from YouTube URL or return the query as search term"""
+    # If it's a YouTube URL, extract the video ID
+    if 'youtube.com/watch?v=' in query:
+        return query.split('v=')[1].split('&')[0]
+    elif 'youtu.be/' in query:
+        return query.split('youtu.be/')[1].split('?')[0]
+    else:
+        # It's a search query, return as is
+        return None
+
+# Search for video using Invidious
+async def search_invidious_video(query):
+    """Search for a video using Invidious API"""
+    instances = await get_working_invidious_instances()
+    random.shuffle(instances)
+    
+    video_id = extract_video_id(query)
+    
+    for instance in instances:
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                if video_id:
+                    # Direct video access
+                    video_url = f"{instance}/api/v1/videos/{video_id}"
+                    async with session.get(video_url) as resp:
+                        if resp.status == 200:
+                            video_data = await resp.json()
+                            return {
+                                'video_id': video_id,
+                                'title': video_data.get('title', 'Unknown Title'),
+                                'duration': video_data.get('duration', 0),
+                                'instance': instance,
+                                'data': video_data
+                            }
+                else:
+                    # Search for video
+                    search_url = f"{instance}/api/v1/search?q={aiohttp.helpers.quote(query)}&type=video"
+                    async with session.get(search_url) as resp:
+                        if resp.status == 200:
+                            search_data = await resp.json()
+                            if search_data and len(search_data) > 0:
+                                video = search_data[0]
+                                return {
+                                    'video_id': video['videoId'],
+                                    'title': video.get('title', 'Unknown Title'),
+                                    'duration': video.get('duration', 0),
+                                    'instance': instance,
+                                    'data': video
+                                }
+        except Exception as e:
+            print(f"❌ Instance {instance} failed: {e}")
+            continue
+    
+    return None
+
+# Get audio URL from video data
+async def get_audio_url(video_info):
+    """Get audio URL from video information"""
+    if not video_info:
+        return None
+    
+    instance = video_info['instance']
+    video_id = video_info['video_id']
+    
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            video_url = f"{instance}/api/v1/videos/{video_id}"
+            async with session.get(video_url) as resp:
+                if resp.status == 200:
+                    video_data = await resp.json()
+                    
+                    # Find best audio stream
+                    best_audio = None
+                    for stream in video_data.get('adaptiveFormats', []):
+                        if 'audio' in stream.get('type', '') and stream.get('url'):
+                            current_bitrate = stream.get('bitrate', 0)
+                            if not best_audio or current_bitrate > best_audio.get('bitrate', 0):
+                                best_audio = stream
+                    
+                    if best_audio:
+                        return {
+                            'url': best_audio['url'],
+                            'title': video_data.get('title', video_info['title']),
+                            'duration': video_data.get('duration', video_info['duration']),
+                            'webpage_url': f"https://youtube.com/watch?v={video_id}",
+                            'instance': instance
+                        }
+    except Exception as e:
+        print(f"❌ Failed to get audio from {instance}: {e}")
+    
+    return None
+
+# Main function to get YouTube audio
+async def get_youtube_audio(query):
+    """Main function to get YouTube audio using Invidious"""
+    print(f"🎵 Searching for: {query}")
+    
+    # Step 1: Search for video
+    video_info = await search_invidious_video(query)
+    if not video_info:
+        raise Exception("ไม่พบวิดีโอที่ค้นหา")
+    
+    print(f"✅ Found video: {video_info['title']}")
+    
+    # Step 2: Get audio URL
+    audio_info = await get_audio_url(video_info)
+    if not audio_info:
+        raise Exception("ไม่พบสตรีมเสียงสำหรับวิดีโอนี้")
+    
+    print(f"✅ Found audio stream")
+    return audio_info
+
+# Audio source class for Invidious
+class InvidiousSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
         self.data = data
@@ -165,10 +190,10 @@ class YTDLSource(discord.PCMVolumeTransformer):
     async def from_query(cls, query, *, loop=None):
         loop = loop or asyncio.get_event_loop()
         
-        data = await get_youtube_audio_simple(query)
+        data = await get_youtube_audio(query)
         
         if not data:
-            raise Exception("Failed to extract audio data")
+            raise Exception("ไม่สามารถดึงข้อมูลเพลงได้")
         
         filename = data['url']
         return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
@@ -185,7 +210,7 @@ def check_queue(ctx, guild_id):
 async def on_ready():
     print(f'✅ {bot.user} has logged in!')
     print(f'✅ Bot is in {len(bot.guilds)} servers')
-    print(f'✅ Using latest yt-dlp configuration')
+    print(f'✅ Using Invidious only (no yt-dlp)')
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="!play"))
 
 @bot.event
@@ -214,7 +239,7 @@ async def join(ctx):
 
 @bot.command()
 async def play(ctx, *, query):
-    """เล่นเพลงจาก YouTube"""
+    """เล่นเพลงจาก YouTube ผ่าน Invidious"""
     if not ctx.author.voice:
         embed = create_embed("❌ ข้อผิดพลาด", "คุณต้องอยู่ในช่องเสียงก่อน!", 0xff0000)
         await ctx.send(embed=embed)
@@ -225,11 +250,10 @@ async def play(ctx, *, query):
     
     async with ctx.typing():
         try:
-            player = await YTDLSource.from_query(query, loop=bot.loop)
+            player = await InvidiousSource.from_query(query, loop=bot.loop)
             
             if player:
                 if not ctx.voice_client.is_playing():
-                    # Add small delay to ensure voice client is ready
                     await asyncio.sleep(0.3)
                     
                     def play_callback(error):
@@ -254,34 +278,37 @@ async def play(ctx, *, query):
                 
         except Exception as e:
             error_msg = str(e)
-            print(f"❌ Final error: {error_msg}")
-            
-            # More helpful error message
-            if "Sign in to confirm" in error_msg:
-                error_display = "YouTube ตรวจพบการใช้งานจากเซิร์ฟเวอร์\nกรุณาลองเพลงอื่นหรือรอสักครู่"
-            elif "Failed to extract" in error_msg:
-                error_display = "YouTube ปรับเปลี่ยนระบบชั่วคราว\nกรุณาลองเพลงอื่นหรือใช้ลิงก์ YouTube โดยตรง"
-            else:
-                error_display = error_msg
+            print(f"❌ Error: {error_msg}")
             
             embed = create_embed("❌ เกิดข้อผิดพลาด", 
                 f"ไม่สามารถเล่นเพลงได้\n\n"
-                f"**สาเหตุ:** {error_display}\n\n"
-                f"**วิธีแก้ไข:**\n"
+                f"**สาเหตุ:** {error_msg}\n\n"
+                f"**โปรดลอง:**\n"
+                f"• ค้นหาด้วยชื่อเพลงแทนลิงก์\n"
                 f"• ลองเพลงอื่น\n"
-                f"• ใช้ลิงก์ YouTube โดยตรง\n"
-                f"• รอ 5-10 นาทีแล้วลองใหม่\n"
-                f"• ลองค้นหาด้วยชื่อเพลงแทนลิงก์", 0xff0000)
+                f"• รอสักครู่แล้วลองใหม่", 0xff0000)
             await ctx.send(embed=embed)
 
 @bot.command()
 async def status(ctx):
     """แสดงสถานะบอท"""
+    instances = await get_working_invidious_instances()
     embed = create_embed("📊 สถานะบอท", 
-        f"**สถานะ:** {'✅ ทำงานปกติ' if bot.is_ready() else '❌ มีปัญหา'}\n"
+        f"**แหล่งข้อมูล:** Invidious เท่านั้น\n"
+        f"**จำนวน Invidious instances:** {len(instances)}\n"
         f"**เซิร์ฟเวอร์:** {len(bot.guilds)}\n"
         f"**พิง:** {round(bot.latency * 1000)}ms\n"
         f"**คิวเพลง:** {sum(len(q) for q in queues.values())} เพลง", 0x0099ff)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def instances(ctx):
+    """แสดง Invidious instances ที่ใช้งานได้"""
+    instances = await get_working_invidious_instances()
+    instances_list = "\n".join([f"• {instance}" for instance in instances[:10]])  # Show first 10
+    embed = create_embed("🌐 Invidious Instances", 
+                        f"**จำนวน instances ที่ใช้งานได้:** {len(instances)}\n\n{instances_list}", 
+                        0x0099ff)
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -409,6 +436,7 @@ async def help_bot(ctx):
 `!volume [0-100]` - ปรับระดับเสียง
 `!nowplaying` - แสดงเพลงที่กำลังเล่น
 `!status` - แสดงสถานะบอท
+`!instances` - แสดง Invidious instances
 
 **🔊 คำสั่งเสียง:**
 `!join` - เข้าร่วมช่องเสียง
@@ -429,5 +457,5 @@ if __name__ == "__main__":
         print("💡 ไปที่ Railway Dashboard → Variables → Add DISCORD_TOKEN")
     else:
         print("🎵 เริ่มต้นบอทเพลง Discord บน Railway...")
-        print("✅ ใช้ yt-dlp การตั้งค่าล่าสุด")
+        print("✅ ใช้ Invidious เท่านั้น (ไม่ใช้ yt-dlp)")
         bot.run(token)
