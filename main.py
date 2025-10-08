@@ -5,16 +5,23 @@ import yt_dlp
 import asyncio
 import aiohttp
 import json
+import random
+import time
 
 # Bot setup
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Large Image URL (will be displayed full size in embed)
+# Large Image URL
 LARGE_IMAGE_URL = "https://media.discordapp.net/attachments/856506862107492402/1425324515034009662/image.png?ex=68e72c65&is=68e5dae5&hm=390850b95ebb0c2bc1eacddd8bdaba22eef053c967a638122fe570bdfb18b724&=&format=webp&quality=lossless"
 
 # Music queues
 queues = {}
+
+# Track usage to detect when to switch methods
+usage_count = 0
+last_method_switch = time.time()
+current_primary_method = "invidious"  # Start with invidious
 
 # FFmpeg options
 ffmpeg_options = {
@@ -22,41 +29,70 @@ ffmpeg_options = {
     'options': '-vn'
 }
 
-# yt-dlp configuration
-ytdl_format_options = {
-    'format': 'bestaudio/best',
-    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
-    'restrictfilenames': True,
-    'noplaylist': True,
-    'nocheckcertificate': True,
-    'ignoreerrors': False,
-    'logtostderr': False,
-    'quiet': True,
-    'no_warnings': True,
-    'default_search': 'auto',
-    'source_address': '0.0.0.0',
-    
-    # Anti-blocking options
-    'extract_flat': False,
-    'socket_timeout': 60,
-    'retries': 15,
-    'fragment_retries': 15,
-    'skip_unavailable_fragments': True,
-    'keep_fragments': True,
-    
-    # User Agent
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    
-    # HTTP headers
-    'http_headers': {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
+# Multiple yt-dlp configurations for rotation
+ytdl_configs = [
+    {  # Config 1 - Standard
+        'format': 'bestaudio/best',
+        'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+        'restrictfilenames': True,
+        'noplaylist': True,
+        'nocheckcertificate': True,
+        'ignoreerrors': False,
+        'logtostderr': False,
+        'quiet': True,
+        'no_warnings': True,
+        'default_search': 'auto',
+        'source_address': '0.0.0.0',
+        'extract_flat': False,
+        'socket_timeout': 60,
+        'retries': 10,
+        'fragment_retries': 10,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     },
-}
+    {  # Config 2 - Alternative
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
+        'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+        'restrictfilenames': True,
+        'noplaylist': True,
+        'nocheckcertificate': True,
+        'ignoreerrors': False,
+        'logtostderr': False,
+        'quiet': True,
+        'no_warnings': True,
+        'default_search': 'auto',
+        'source_address': '0.0.0.0',
+        'extract_flat': False,
+        'socket_timeout': 60,
+        'retries': 8,
+        'fragment_retries': 8,
+        'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    },
+    {  # Config 3 - Mobile user agent
+        'format': 'bestaudio/best',
+        'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+        'restrictfilenames': True,
+        'noplaylist': True,
+        'nocheckcertificate': True,
+        'ignoreerrors': False,
+        'logtostderr': False,
+        'quiet': True,
+        'no_warnings': True,
+        'default_search': 'auto',
+        'source_address': '0.0.0.0',
+        'extract_flat': False,
+        'socket_timeout': 60,
+        'retries': 12,
+        'fragment_retries': 12,
+        'user_agent': 'Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+    }
+]
 
-ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+# Current yt-dlp config index
+current_ytdl_config = 0
+
+def get_current_ytdl():
+    """Get current yt-dlp configuration"""
+    return yt_dlp.YoutubeDL(ytdl_configs[current_ytdl_config])
 
 # Embed creation function with LARGE IMAGE
 def create_embed(title, description, color=0x00ff00, show_large_image=True):
@@ -71,49 +107,61 @@ def create_embed(title, description, color=0x00ff00, show_large_image=True):
     # Use LARGE image instead of small thumbnail
     if show_large_image:
         embed.set_image(url=LARGE_IMAGE_URL)
-    else:
-        # Still set thumbnail for some cases if needed
-        embed.set_thumbnail(url=LARGE_IMAGE_URL)
     
     embed.set_footer(text="Music Bot • Made with ❤️")
     return embed
 
-# Invidious API for YouTube audio
+# Enhanced Invidious API with multiple instances and retries
 async def get_youtube_audio_url(query):
-    """Use Invidious API to avoid yt-dlp issues"""
+    """Use Invidious API to avoid yt-dlp issues with multiple instances"""
     invidious_instances = [
         "https://vid.puffyan.us",
         "https://inv.riverside.rocks", 
         "https://yt.artemislena.eu",
         "https://invidious.snopyta.org",
-        "https://yewtu.be"
+        "https://yewtu.be",
+        "https://invidious.weblibre.org",
+        "https://invidious.esmailelbob.xyz",
+        "https://inv.bp.projectsegfau.lt"
     ]
+    
+    # Shuffle instances to distribute load
+    random.shuffle(invidious_instances)
     
     for instance in invidious_instances:
         try:
-            async with aiohttp.ClientSession() as session:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 # Search for video
-                async with session.get(f"{instance}/api/v1/search?q={query}") as resp:
+                async with session.get(f"{instance}/api/v1/search?q={query}&type=video") as resp:
                     if resp.status == 200:
                         search_data = await resp.json()
                         if search_data and len(search_data) > 0:
+                            # Get first result
                             video_id = search_data[0]['videoId']
                             
-                            # Get video info
+                            # Get video info with timeout
                             async with session.get(f"{instance}/api/v1/videos/{video_id}") as video_resp:
                                 if video_resp.status == 200:
                                     video_data = await video_resp.json()
                                     
-                                    # Find audio stream
+                                    # Find best audio stream
+                                    best_audio = None
                                     for format in video_data.get('adaptiveFormats', []):
                                         if 'audio' in format.get('type', '') and format.get('url'):
-                                            return {
-                                                'url': format['url'],
-                                                'title': video_data['title'],
-                                                'duration': video_data.get('duration', 0),
-                                                'webpage_url': f"https://youtube.com/watch?v={video_id}"
-                                            }
-        except Exception:
+                                            if not best_audio or format.get('bitrate', 0) > best_audio.get('bitrate', 0):
+                                                best_audio = format
+                                    
+                                    if best_audio:
+                                        return {
+                                            'url': best_audio['url'],
+                                            'title': video_data['title'],
+                                            'duration': video_data.get('duration', 0),
+                                            'webpage_url': f"https://youtube.com/watch?v={video_id}",
+                                            'instance': instance
+                                        }
+        except Exception as e:
+            print(f"Invidious instance {instance} failed: {e}")
             continue
     
     return None
@@ -129,6 +177,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False):
         loop = loop or asyncio.get_event_loop()
+        ytdl = get_current_ytdl()
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
         
         if 'entries' in data:
@@ -162,11 +211,32 @@ def check_queue(ctx, guild_id):
             source = queues[guild_id].pop(0)
             ctx.voice_client.play(source, after=lambda x=None: check_queue(ctx, guild_id))
 
+def rotate_method():
+    """Rotate between different methods to avoid detection"""
+    global current_primary_method, current_ytdl_config, usage_count, last_method_switch
+    
+    usage_count += 1
+    current_time = time.time()
+    
+    # Rotate method every 50 requests or 2 hours, whichever comes first
+    if usage_count >= 50 or (current_time - last_method_switch) >= 7200:
+        if current_primary_method == "invidious":
+            current_primary_method = "ytdl"
+            # Also rotate yt-dlp config
+            current_ytdl_config = (current_ytdl_config + 1) % len(ytdl_configs)
+        else:
+            current_primary_method = "invidious"
+        
+        usage_count = 0
+        last_method_switch = current_time
+        print(f"🔄 Switched primary method to: {current_primary_method}")
+
 # Bot events
 @bot.event
 async def on_ready():
     print(f'✅ {bot.user} has logged in!')
     print(f'✅ Bot is in {len(bot.guilds)} servers')
+    print(f'✅ Primary method: {current_primary_method}')
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="!play"))
 
 @bot.event
@@ -209,20 +279,36 @@ async def play(ctx, *, query):
             player = None
             method_used = "ไม่ทราบ"
             
-            # ลองใช้ Invidious ก่อน (เสถียรกว่า)
-            try:
-                player = await InvidiousSource.from_query(query, loop=bot.loop)
-                method_used = "Invidious"
-            except Exception as e1:
-                print(f"Invidious failed: {e1}")
-                
-                # Fallback ไปที่ yt-dlp
+            # Rotate method to avoid detection
+            rotate_method()
+            
+            # Try methods based on current primary method
+            if current_primary_method == "invidious":
+                # Try Invidious first, then yt-dlp
+                try:
+                    player = await InvidiousSource.from_query(query, loop=bot.loop)
+                    method_used = "Invidious"
+                except Exception as e1:
+                    print(f"Invidious failed: {e1}")
+                    try:
+                        player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
+                        method_used = f"YouTube Direct (Config {current_ytdl_config + 1})"
+                    except Exception as e2:
+                        print(f"yt-dlp failed: {e2}")
+                        raise Exception(f"ไม่สามารถดึงข้อมูลเพลงได้: {str(e2)}")
+            else:
+                # Try yt-dlp first, then Invidious
                 try:
                     player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
-                    method_used = "YouTube Direct"
-                except Exception as e2:
-                    print(f"yt-dlp failed: {e2}")
-                    raise Exception(f"ไม่สามารถดึงข้อมูลเพลงได้: {str(e2)}")
+                    method_used = f"YouTube Direct (Config {current_ytdl_config + 1})"
+                except Exception as e1:
+                    print(f"yt-dlp failed: {e1}")
+                    try:
+                        player = await InvidiousSource.from_query(query, loop=bot.loop)
+                        method_used = "Invidious"
+                    except Exception as e2:
+                        print(f"Invidious failed: {e2}")
+                        raise Exception(f"ไม่สามารถดึงข้อมูลเพลงได้: {str(e2)}")
             
             if player:
                 if not ctx.voice_client.is_playing():
@@ -239,14 +325,28 @@ async def play(ctx, *, query):
                 
         except Exception as e:
             error_msg = str(e)
+            # Rotate method on error
+            global current_primary_method
+            current_primary_method = "invidious" if current_primary_method == "ytdl" else "ytdl"
+            print(f"🔄 Method rotated due to error. New method: {current_primary_method}")
+            
             embed = create_embed("❌ เกิดข้อผิดพลาด", 
                 f"ไม่สามารถเล่นเพลงได้\n\n"
                 f"**ข้อความ:** {error_msg}\n\n"
-                f"กรุณาลอง:\n"
-                f"• เพลงอื่น\n"
-                f"• ค้นหาใหม่\n"
-                f"• รอสักครู่", 0xff0000)
+                f"กำลังลองวิธีอื่น...\n"
+                f"กรุณาลองคำสั่งอีกครั้ง", 0xff0000)
             await ctx.send(embed=embed)
+
+@bot.command()
+async def status(ctx):
+    """แสดงสถานะบอท"""
+    embed = create_embed("📊 สถานะบอท", 
+        f"**วิธีการหลัก:** {current_primary_method}\n"
+        f"**จำนวนการใช้งาน:** {usage_count}\n"
+        f"**คอนฟิก yt-dlp:** {current_ytdl_config + 1}\n"
+        f"**เซิร์ฟเวอร์:** {len(bot.guilds)}\n"
+        f"**พิง:** {round(bot.latency * 1000)}ms", 0x0099ff)
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def pause(ctx):
@@ -372,6 +472,7 @@ async def help_bot(ctx):
 `!queue` - แสดงคิวเพลง
 `!volume [0-100]` - ปรับระดับเสียง
 `!nowplaying` - แสดงเพลงที่กำลังเล่น
+`!status` - แสดงสถานะบอท
 
 **🔊 คำสั่งเสียง:**
 `!join` - เข้าร่วมช่องเสียง
@@ -392,4 +493,5 @@ if __name__ == "__main__":
         print("💡 ไปที่ Railway Dashboard → Variables → Add DISCORD_TOKEN")
     else:
         print("🎵 เริ่มต้นบอทเพลง Discord บน Railway...")
+        print(f"✅ วิธีการเริ่มต้น: {current_primary_method}")
         bot.run(token)
