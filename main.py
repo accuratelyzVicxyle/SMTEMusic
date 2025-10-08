@@ -14,6 +14,7 @@ THUMBNAIL_URL = "https://media.discordapp.net/attachments/856506862107492402/142
 queues = {}
 
 # ตั้งค่า yt-dlp
+# ตั้งค่า yt-dlp ที่อัพเดตแล้ว
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
@@ -26,23 +27,56 @@ ytdl_format_options = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
-    # เพิ่ม options ใหม่เพื่อหลีกเลี่ยงการบล็อก
+    
+    # Options สำหรับหลีกเลี่ยงการบล็อก
     'extract_flat': False,
-    'socket_timeout': 30,
-    'retries': 10,
-    'fragment_retries': 10,
+    'socket_timeout': 60,
+    'retries': 20,
+    'fragment_retries': 20,
+    'skip_unavailable_fragments': True,
+    'keep_fragments': True,
     'continue_dl': True,
     'no_part': True,
     'noprogress': True,
-    # User agent ที่ดูเหมือน browser จริง
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-    # ใช้ extractor args เพื่อเลี่ยงการบล็อก
+    
+    # User Agent ที่หลากหลายและใหม่กว่า
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    
+    # HTTP headers เพิ่มเติม
+    'http_headers': {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+    },
+    
+    # Extractor arguments ที่หลากหลาย
     'extractor_args': {
         'youtube': {
-            'player_client': ['android', 'web'],
-            'player_skip': ['configs', 'webpage']
+            'player_client': ['android', 'web', 'ios', 'android_embedded', 'tv_embedded'],
+            'player_skip': ['configs', 'webpage', 'js'],
+            'skip': ['dash', 'hls']
         }
-    }
+    },
+    
+    # Postprocessor args
+    'postprocessor_args': {
+        'ffmpeg': ['-ac', '2']
+    },
+    
+    # Throttling เพื่อเลี่ยง rate limits
+    'throttled_rate': '512K',
+    'ratelimit': 1048576,
+    
+    # ใช้ format ที่หลากหลาย
+    'format_sort': ['res:720', 'ext:mp4:m4a', 'acodec:mp3'],
+    'prefer_free_formats': True,
+    
+    # Mark watched เพื่อหลีกเลี่ยงการติดตาม
+    'mark_watched': False,
+    'no_overwrites': True,
 }
 
 ffmpeg_options = {
