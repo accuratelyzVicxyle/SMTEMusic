@@ -6,6 +6,10 @@ import aiohttp
 import random
 import urllib.parse
 import yt_dlp
+import ssl
+
+# Disable SSL verification for yt-dlp (temporary fix for Railway)
+ssl._create_default_https_context = ssl._create_unverified_context
 
 # Bot setup
 intents = discord.Intents.all()
@@ -17,19 +21,25 @@ LARGE_IMAGE_URL = "https://media.discordapp.net/attachments/856506862107492402/1
 # Music queues
 queues = {}
 
-# yt-dlp options for audio extraction
+# yt-dlp options with SSL workaround
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
     'noplaylist': True,
-    'nocheckcertificate': True,
+    'nocheckcertificate': True,  # Bypass SSL verification
     'ignoreerrors': False,
     'logtostderr': False,
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
+    # SSL workaround options
+    'geo_bypass': True,
+    'geo_bypass_country': 'US',
+    'http_headers': {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
 }
 
 ffmpeg_options = {
@@ -55,14 +65,18 @@ class YTDLSource(discord.PCMVolumeTransformer):
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False):
         loop = loop or asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+        try:
+            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+            
+            if 'entries' in data:
+                # Take first item from a playlist
+                data = data['entries'][0]
 
-        if 'entries' in data:
-            # Take first item from a playlist
-            data = data['entries'][0]
-
-        filename = data['url'] if stream else ytdl.prepare_filename(data)
-        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+            filename = data['url'] if stream else ytdl.prepare_filename(data)
+            return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+        except Exception as e:
+            print(f"YTDLSource Error: {e}")
+            raise
 
 # Embed creation function with LARGE IMAGE
 def create_embed(title, description, color=0x00ff00, show_large_image=True):
@@ -124,7 +138,9 @@ async def search_invidious_video(query):
     for instance in instances:
         try:
             timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Create SSL context that doesn't verify certificates
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
                 if video_id:
                     # Direct video access
                     video_url = f"{instance}/api/v1/videos/{video_id}"
@@ -160,13 +176,46 @@ async def search_invidious_video(query):
     
     return None
 
+# Get audio stream from Invidious
+async def get_invidious_audio_stream(video_info):
+    """Get audio stream URL from Invidious video info"""
+    if not video_info:
+        return None
+    
+    instance = video_info['instance']
+    video_id = video_info['video_id']
+    
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+            video_url = f"{instance}/api/v1/videos/{video_id}"
+            async with session.get(video_url) as resp:
+                if resp.status == 200:
+                    video_data = await resp.json()
+                    
+                    # Find best audio stream
+                    best_audio = None
+                    for stream in video_data.get('adaptiveFormats', []):
+                        if 'audio' in stream.get('type', '') and stream.get('url'):
+                            current_bitrate = stream.get('bitrate', 0)
+                            if not best_audio or current_bitrate > best_audio.get('bitrate', 0):
+                                best_audio = stream
+                    
+                    if best_audio:
+                        return best_audio['url']
+    except Exception as e:
+        print(f"❌ Failed to get audio from Invidious: {e}")
+    
+    return None
+
 # Main function to get YouTube audio with fallback
 async def get_youtube_audio(query):
     """Main function to get YouTube audio using yt-dlp with Invidious fallback"""
     print(f"🎵 Searching for: {query}")
     
+    # Try yt-dlp first (most reliable)
     try:
-        # Try yt-dlp first (most reliable)
         print("🔧 Trying yt-dlp...")
         player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
         print(f"✅ yt-dlp success: {player.title}")
@@ -190,38 +239,21 @@ async def get_youtube_audio(query):
             print(f"✅ Invidious found video: {video_info['title']}")
             
             # Get audio stream from Invidious
-            instance = video_info['instance']
-            video_id = video_info['video_id']
+            audio_url = await get_invidious_audio_stream(video_info)
+            if not audio_url:
+                raise Exception("ไม่พบสตรีมเสียงสำหรับวิดีโอนี้ใน Invidious")
             
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                video_url = f"{instance}/api/v1/videos/{video_id}"
-                async with session.get(video_url) as resp:
-                    if resp.status == 200:
-                        video_data = await resp.json()
-                        
-                        # Find best audio stream
-                        best_audio = None
-                        for stream in video_data.get('adaptiveFormats', []):
-                            if 'audio' in stream.get('type', '') and stream.get('url'):
-                                current_bitrate = stream.get('bitrate', 0)
-                                if not best_audio or current_bitrate > best_audio.get('bitrate', 0):
-                                    best_audio = stream
-                        
-                        if best_audio:
-                            return {
-                                'url': best_audio['url'],
-                                'title': video_data.get('title', 'Unknown Title'),
-                                'duration': video_data.get('duration', 0),
-                                'webpage_url': f"https://youtube.com/watch?v={video_id}",
-                                'source': f'Invidious ({instance})'
-                            }
-            
-            raise Exception("ไม่พบสตรีมเสียงสำหรับวิดีโอนี้")
+            return {
+                'url': audio_url,
+                'title': video_info['title'],
+                'duration': video_info.get('duration', 0),
+                'webpage_url': f"https://youtube.com/watch?v={video_info['video_id']}",
+                'source': f'Invidious ({video_info["instance"]})'
+            }
             
         except Exception as invidious_error:
             print(f"❌ Invidious also failed: {invidious_error}")
-            raise Exception(f"ทั้ง yt-dlp และ Invidious ล้มเหลว: {str(invidious_error)}")
+            raise Exception(f"ไม่สามารถเล่นเพลงได้: {str(invidious_error)}")
 
 # Audio source class
 class MusicSource(discord.PCMVolumeTransformer):
