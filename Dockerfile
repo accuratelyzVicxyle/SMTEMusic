@@ -1,22 +1,22 @@
 FROM python:3.11-slim
 
-# ติดตั้ง FFmpeg และ dependencies ที่จำเป็น
+# Install dependencies
 RUN apt-get update && \
     apt-get install -y ffmpeg && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# สร้าง working directory
+# Create working directory
 WORKDIR /app
 
-# คัดลอก requirements ก่อน (เพื่อใช้ Docker cache)
+# Copy requirements first (for Docker cache)
 COPY requirements.txt .
 
-# ติดตั้ง Python packages
+# Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
-# คัดลอกโค้ดทั้งหมด
+# Copy all code
 COPY . .
 
-# รันบอท
+# Run bot
 CMD ["python", "main.py"]
