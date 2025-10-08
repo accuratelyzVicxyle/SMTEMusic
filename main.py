@@ -24,10 +24,32 @@ last_method_switch = time.time()
 current_primary_method = "invidious"  # Start with invidious
 current_ytdl_config = 0
 
-# FFmpeg options
+# Enhanced FFmpeg options with better reconnection and buffering
 ffmpeg_options = {
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-    'options': '-vn'
+    'before_options': (
+        '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 '
+        '-fflags +genpts -flags low_delay -strict experimental '
+        '-avoid_negative_ts make_zero -fflags +nobuffer+fastseek '
+        '-analyzeduration 0 -probesize 32 -bufsize 512k '
+        '-use_wallclock_as_timestamps 1'
+    ),
+    'options': (
+        '-vn -af aresample=async=1:first_pts=0 '
+        '-c:a libopus -b:a 128k -application voip '
+        '-frame_duration 60 -packet_loss 1 '
+        '-f opus'
+    )
+}
+
+# Alternative FFmpeg options for problematic streams
+ffmpeg_options_alt = {
+    'before_options': (
+        '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 15 '
+        '-fflags +genpts -flags low_delay -strict experimental '
+        '-avoid_negative_ts make_zero -fflags +nobuffer '
+        '-analyzeduration 0 -probesize 64K -bufsize 1024k'
+    ),
+    'options': '-vn -c:a libopus -b:a 96k -f opus'
 }
 
 # Multiple yt-dlp configurations for rotation
@@ -49,6 +71,12 @@ ytdl_configs = [
         'retries': 10,
         'fragment_retries': 10,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'http_headers': {
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache',
+        },
     },
     {  # Config 2 - Alternative
         'format': 'bestaudio[ext=m4a]/bestaudio/best',
@@ -67,6 +95,11 @@ ytdl_configs = [
         'retries': 8,
         'fragment_retries': 8,
         'user_agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'http_headers': {
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate',
+            'Accept-Language': 'en-US,en;q=0.8',
+        },
     },
     {  # Config 3 - Mobile user agent
         'format': 'bestaudio/best',
@@ -85,6 +118,11 @@ ytdl_configs = [
         'retries': 12,
         'fragment_retries': 12,
         'user_agent': 'Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+        'http_headers': {
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate',
+            'Accept-Language': 'en-US,en;q=0.7',
+        },
     }
 ]
 
@@ -164,7 +202,7 @@ async def get_youtube_audio_url(query):
     
     return None
 
-# Audio source classes
+# Audio source classes with improved error handling
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
@@ -173,7 +211,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.url = data.get('url')
 
     @classmethod
-    async def from_url(cls, url, *, loop=None, stream=False):
+    async def from_url(cls, url, *, loop=None, stream=False, use_alt_ffmpeg=False):
         loop = loop or asyncio.get_event_loop()
         ytdl = get_current_ytdl()
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
@@ -182,7 +220,11 @@ class YTDLSource(discord.PCMVolumeTransformer):
             data = data['entries'][0]
         
         filename = data['url'] if stream else ytdl.prepare_filename(data)
-        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+        
+        # Choose FFmpeg options based on flag
+        opts = ffmpeg_options_alt if use_alt_ffmpeg else ffmpeg_options
+        
+        return cls(discord.FFmpegPCMAudio(filename, **opts), data=data)
 
 class InvidiousSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
@@ -192,7 +234,7 @@ class InvidiousSource(discord.PCMVolumeTransformer):
         self.url = data.get('webpage_url')
 
     @classmethod
-    async def from_query(cls, query, *, loop=None):
+    async def from_query(cls, query, *, loop=None, use_alt_ffmpeg=False):
         loop = loop or asyncio.get_event_loop()
         data = await get_youtube_audio_url(query)
         
@@ -200,7 +242,11 @@ class InvidiousSource(discord.PCMVolumeTransformer):
             raise Exception("Cannot fetch music data from Invidious")
         
         filename = data['url']
-        return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+        
+        # Choose FFmpeg options based on flag
+        opts = ffmpeg_options_alt if use_alt_ffmpeg else ffmpeg_options
+        
+        return cls(discord.FFmpegPCMAudio(filename, **opts), data=data)
 
 # Queue management
 def check_queue(ctx, guild_id):
@@ -278,6 +324,7 @@ async def play(ctx, *, query):
         try:
             player = None
             method_used = "ไม่ทราบ"
+            use_alt_ffmpeg = False
             
             # Rotate method to avoid detection
             rotate_method()
@@ -286,41 +333,81 @@ async def play(ctx, *, query):
             if current_primary_method == "invidious":
                 # Try Invidious first, then yt-dlp
                 try:
-                    player = await InvidiousSource.from_query(query, loop=bot.loop)
+                    player = await InvidiousSource.from_query(query, loop=bot.loop, use_alt_ffmpeg=use_alt_ffmpeg)
                     method_used = "Invidious"
                 except Exception as e1:
                     print(f"Invidious failed: {e1}")
                     try:
-                        player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
-                        method_used = f"YouTube Direct (Config {current_ytdl_config + 1})"
+                        # Try with alternative FFmpeg options
+                        player = await YTDLSource.from_url(query, loop=bot.loop, stream=True, use_alt_ffmpeg=True)
+                        method_used = f"YouTube Direct (Config {current_ytdl_config + 1}) [Alt FFmpeg]"
+                        use_alt_ffmpeg = True
                     except Exception as e2:
                         print(f"yt-dlp failed: {e2}")
-                        raise Exception(f"ไม่สามารถดึงข้อมูลเพลงได้: {str(e2)}")
+                        # Try one more time with standard FFmpeg
+                        try:
+                            player = await YTDLSource.from_url(query, loop=bot.loop, stream=True, use_alt_ffmpeg=False)
+                            method_used = f"YouTube Direct (Config {current_ytdl_config + 1})"
+                        except Exception as e3:
+                            raise Exception(f"ไม่สามารถดึงข้อมูลเพลงได้: {str(e3)}")
             else:
                 # Try yt-dlp first, then Invidious
                 try:
-                    player = await YTDLSource.from_url(query, loop=bot.loop, stream=True)
+                    player = await YTDLSource.from_url(query, loop=bot.loop, stream=True, use_alt_ffmpeg=use_alt_ffmpeg)
                     method_used = f"YouTube Direct (Config {current_ytdl_config + 1})"
                 except Exception as e1:
                     print(f"yt-dlp failed: {e1}")
                     try:
-                        player = await InvidiousSource.from_query(query, loop=bot.loop)
-                        method_used = "Invidious"
+                        # Try with alternative FFmpeg options
+                        player = await YTDLSource.from_url(query, loop=bot.loop, stream=True, use_alt_ffmpeg=True)
+                        method_used = f"YouTube Direct (Config {current_ytdl_config + 1}) [Alt FFmpeg]"
+                        use_alt_ffmpeg = True
                     except Exception as e2:
-                        print(f"Invidious failed: {e2}")
-                        raise Exception(f"ไม่สามารถดึงข้อมูลเพลงได้: {str(e2)}")
+                        print(f"yt-dlp alt failed: {e2}")
+                        try:
+                            player = await InvidiousSource.from_query(query, loop=bot.loop, use_alt_ffmpeg=False)
+                            method_used = "Invidious"
+                        except Exception as e3:
+                            print(f"Invidious failed: {e3}")
+                            # One last try with alt FFmpeg on Invidious
+                            try:
+                                player = await InvidiousSource.from_query(query, loop=bot.loop, use_alt_ffmpeg=True)
+                                method_used = "Invidious [Alt FFmpeg]"
+                                use_alt_ffmpeg = True
+                            except Exception as e4:
+                                raise Exception(f"ไม่สามารถดึงข้อมูลเพลงได้: {str(e4)}")
             
             if player:
                 if not ctx.voice_client.is_playing():
-                    ctx.voice_client.play(player, after=lambda x=None: check_queue(ctx, ctx.guild.id))
-                    embed = create_embed("🎵 กำลังเล่นเพลง", f"**{player.title}**\n\nผ่าน: {method_used}\n\nขอให้คุณสนุกกับการฟังเพลง! 🎶")
+                    # Add small delay to ensure voice client is ready
+                    await asyncio.sleep(0.5)
+                    
+                    def play_callback(error):
+                        if error:
+                            print(f"Playback error: {error}")
+                        check_queue(ctx, ctx.guild.id)
+                    
+                    ctx.voice_client.play(player, after=play_callback)
+                    
+                    status_note = ""
+                    if use_alt_ffmpeg:
+                        status_note = "\n🔧 ใช้โหมดสตรีมมิ่งพิเศษ"
+                    
+                    embed = create_embed("🎵 กำลังเล่นเพลง", 
+                                        f"**{player.title}**\n\nผ่าน: {method_used}{status_note}\n\nขอให้คุณสนุกกับการฟังเพลง! 🎶")
                     await ctx.send(embed=embed)
                 else:
                     guild_id = ctx.guild.id
                     if guild_id not in queues:
                         queues[guild_id] = []
                     queues[guild_id].append(player)
-                    embed = create_embed("✅ เพิ่มเพลงในคิวแล้ว", f"**{player.title}**\n\nตำแหน่งในคิว: #{len(queues[guild_id])}")
+                    
+                    status_note = ""
+                    if use_alt_ffmpeg:
+                        status_note = " (โหมดสตรีมมิ่งพิเศษ)"
+                    
+                    embed = create_embed("✅ เพิ่มเพลงในคิวแล้ว", 
+                                        f"**{player.title}**\n\nตำแหน่งในคิว: #{len(queues[guild_id])}{status_note}")
                     await ctx.send(embed=embed)
                 
         except Exception as e:
