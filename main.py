@@ -22,6 +22,7 @@ queues = {}
 usage_count = 0
 last_method_switch = time.time()
 current_primary_method = "invidious"  # Start with invidious
+current_ytdl_config = 0
 
 # FFmpeg options
 ffmpeg_options = {
@@ -86,9 +87,6 @@ ytdl_configs = [
         'user_agent': 'Mozilla/5.0 (Linux; Android 10; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
     }
 ]
-
-# Current yt-dlp config index
-current_ytdl_config = 0
 
 def get_current_ytdl():
     """Get current yt-dlp configuration"""
@@ -266,6 +264,8 @@ async def join(ctx):
 @bot.command()
 async def play(ctx, *, query):
     """เล่นเพลงจาก YouTube"""
+    global current_primary_method, current_ytdl_config, usage_count, last_method_switch
+    
     if not ctx.author.voice:
         embed = create_embed("❌ ข้อผิดพลาด", "คุณต้องอยู่ในช่องเสียงก่อน!", 0xff0000)
         await ctx.send(embed=embed)
@@ -326,7 +326,6 @@ async def play(ctx, *, query):
         except Exception as e:
             error_msg = str(e)
             # Rotate method on error
-            global current_primary_method
             current_primary_method = "invidious" if current_primary_method == "ytdl" else "ytdl"
             print(f"🔄 Method rotated due to error. New method: {current_primary_method}")
             
