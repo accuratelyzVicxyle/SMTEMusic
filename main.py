@@ -15,6 +15,7 @@ ffmpeg_options = {
 }
 
 # ตั้งค่า yt-dlp
+# ตั้งค่า yt-dlp
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
@@ -26,7 +27,24 @@ ytdl_format_options = {
     'quiet': True,
     'no_warnings': True,
     'default_search': 'auto',
-    'source_address': '0.0.0.0'
+    'source_address': '0.0.0.0',
+    # เพิ่ม options ใหม่เพื่อหลีกเลี่ยงการบล็อก
+    'extract_flat': False,
+    'socket_timeout': 30,
+    'retries': 10,
+    'fragment_retries': 10,
+    'continue_dl': True,
+    'no_part': True,
+    'noprogress': True,
+    # User agent ที่ดูเหมือน browser จริง
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    # ใช้ extractor args เพื่อเลี่ยงการบล็อก
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android', 'web'],
+            'player_skip': ['configs', 'webpage']
+        }
+    }
 }
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
