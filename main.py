@@ -4,6 +4,10 @@ from discord.ext import commands
 import yt_dlp
 import asyncio
 
+# ตรวจสอบ environment
+print("🚀 Starting Discord Music Bot...")
+print(f"Python executable: {os.sys.executable}")
+
 # ตั้งค่า FFmpeg options
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
@@ -68,6 +72,7 @@ async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
     print(f"Error: {error}")
+    await ctx.send(f"❌ เกิดข้อผิดพลาด: {error}")
 
 @bot.command()
 async def join(ctx):
@@ -191,5 +196,5 @@ if __name__ == "__main__":
         print("❌ ตั้งค่า DISCORD_TOKEN ใน Environment Variables")
         print("💡 ไปที่ Railway Dashboard → Variables → Add DISCORD_TOKEN")
     else:
-        print("🚀 Starting Discord Music Bot...")
+        print("🎵 Starting Discord Music Bot on Railway...")
         bot.run(token)
