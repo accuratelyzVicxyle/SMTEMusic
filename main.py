@@ -18,9 +18,6 @@ LARGE_IMAGE_URL = "https://media.discordapp.net/attachments/856506862107492402/1
 # Music queues
 queues = {}
 
-# Try to use yt-dlp with updated settings
-USE_YTDLP = True
-
 # Enhanced FFmpeg options for stable streaming
 ffmpeg_options = {
     'before_options': (
@@ -33,7 +30,7 @@ ffmpeg_options = {
     'options': '-vn -c:a libopus -b:a 128k -f opus'
 }
 
-# Updated yt-dlp configuration to handle current YouTube issues
+# Latest yt-dlp configuration for October 2024
 ytdl_format_options = {
     'format': 'bestaudio/best',
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
@@ -46,26 +43,42 @@ ytdl_format_options = {
     'no_warnings': True,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
+    
+    # Critical fixes for YouTube
     'extract_flat': False,
-    'socket_timeout': 60,
-    'retries': 10,
-    'fragment_retries': 10,
-    # Updated user agents and headers
+    'socket_timeout': 30,
+    'retries': 15,
+    'fragment_retries': 15,
+    'skip_unavailable_fragments': True,
+    'keep_fragments': True,
+    
+    # Updated user agent and headers
     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    
     'http_headers': {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
     },
-    # Try different extractor approaches
+    
+    # YouTube specific fixes
     'extractor_args': {
         'youtube': {
-            'player_client': ['android', 'web'],
+            'player_client': ['android', 'web', 'ios'],
             'player_skip': ['configs', 'webpage', 'js'],
         }
     },
+    
+    # Force specific formats to avoid issues
+    'format_sort': ['res:720', 'ext:mp4:m4a', 'acodec:mp3'],
+    'prefer_free_formats': True,
+    
+    # Additional YouTube parameters
+    'youtube_include_dash_manifest': False,
+    'youtube_include_hls_manifest': False,
 }
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
@@ -87,126 +100,60 @@ def create_embed(title, description, color=0x00ff00, show_large_image=True):
     embed.set_footer(text="Music Bot • Made with ❤️")
     return embed
 
-# Updated Invidious API with working instances
-async def get_youtube_audio_url(query):
-    """Use Invidious API to get YouTube audio with multiple fallback instances"""
-    # Updated list of working Invidious instances (as of October 2024)
-    invidious_instances = [
-        "https://invidious.private.coffee",
-        "https://invidious.perennialte.ch",
-        "https://yt.artemislena.eu",
-        "https://invidious.slipfox.xyz",
-        "https://invidious.weblibre.org",
-        "https://invidious.privacydev.net",
-        "https://invidious.namazso.eu",
-        "https://invidious.drgns.space",
-        "https://iv.melmac.space",
-        "https://invidious.protokolla.fi"
-    ]
-    
-    # Shuffle instances to distribute load
-    random.shuffle(invidious_instances)
-    
-    for instance in invidious_instances:
-        try:
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                print(f"🔍 Trying Invidious instance: {instance}")
-                
-                # Search for video
-                encoded_query = aiohttp.helpers.quote(query, safe='')
-                search_url = f"{instance}/api/v1/search?q={encoded_query}&type=video"
-                
-                async with session.get(search_url) as resp:
-                    if resp.status == 200:
-                        search_data = await resp.json()
-                        if search_data and len(search_data) > 0:
-                            # Get first result
-                            video = search_data[0]
-                            video_id = video['videoId']
-                            video_title = video.get('title', 'Unknown Title')
-                            
-                            print(f"✅ Found video: {video_title} on {instance}")
-                            
-                            # Get video info with timeout
-                            video_url = f"{instance}/api/v1/videos/{video_id}"
-                            async with session.get(video_url) as video_resp:
-                                if video_resp.status == 200:
-                                    video_data = await video_resp.json()
-                                    
-                                    # Find best audio stream
-                                    best_audio = None
-                                    for format in video_data.get('adaptiveFormats', []):
-                                        if 'audio' in format.get('type', '') and format.get('url'):
-                                            # Prefer higher bitrate
-                                            current_bitrate = format.get('bitrate', 0)
-                                            if not best_audio or current_bitrate > best_audio.get('bitrate', 0):
-                                                best_audio = format
-                                    
-                                    if best_audio:
-                                        print(f"🎵 Found audio stream with bitrate: {best_audio.get('bitrate', 0)}")
-                                        return {
-                                            'url': best_audio['url'],
-                                            'title': video_data.get('title', video_title),
-                                            'duration': video_data.get('duration', 0),
-                                            'webpage_url': f"https://youtube.com/watch?v={video_id}",
-                                            'instance': instance
-                                        }
-                                    else:
-                                        print(f"❌ No audio stream found for video {video_id}")
-                        else:
-                            print(f"❌ No search results from {instance}")
-                    else:
-                        print(f"❌ Search failed with status {resp.status} from {instance}")
-        except asyncio.TimeoutError:
-            print(f"⏰ Timeout on Invidious instance: {instance}")
-            continue
-        except Exception as e:
-            print(f"❌ Error on Invidious instance {instance}: {str(e)}")
-            continue
-    
-    print("❌ All Invidious instances failed")
-    return None
-
-# Alternative method using yt-dlp with updated settings
-async def get_audio_with_ytdlp(query):
-    """Try to get audio using yt-dlp with updated settings"""
+# Simple YouTube audio extraction using yt-dlp only
+async def get_youtube_audio_simple(query):
+    """Simple method using only yt-dlp with latest fixes"""
     try:
-        print(f"🔍 Trying yt-dlp for: {query}")
+        print(f"🎵 Attempting to play: {query}")
         
-        # Try multiple approaches
-        approaches = [
-            query,  # Original query
-            f"ytsearch:{query}",  # YouTube search
-        ]
-        
-        for approach in approaches:
+        # Try direct extraction first
+        try:
+            loop = asyncio.get_event_loop()
+            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(query, download=False))
+            
+            if 'entries' in data:
+                data = data['entries'][0]
+            
+            if data and data.get('url'):
+                print(f"✅ Successfully extracted audio URL")
+                return {
+                    'url': data['url'],
+                    'title': data.get('title', 'Unknown Title'),
+                    'duration': data.get('duration', 0),
+                    'webpage_url': data.get('webpage_url', ''),
+                    'method': 'yt-dlp'
+                }
+        except Exception as e:
+            print(f"❌ Direct extraction failed: {str(e)}")
+            
+            # Try with ytsearch fallback
             try:
                 loop = asyncio.get_event_loop()
-                data = await loop.run_in_executor(None, lambda: ytdl.extract_info(approach, download=False))
+                data = await loop.run_in_executor(None, lambda: ytdl.extract_info(f"ytsearch:{query}", download=False))
                 
-                if 'entries' in data:
+                if 'entries' in data and data['entries']:
                     data = data['entries'][0]
-                
-                if data and data.get('url'):
-                    print(f"✅ yt-dlp success with approach: {approach}")
-                    return {
-                        'url': data['url'],
-                        'title': data.get('title', 'Unknown Title'),
-                        'duration': data.get('duration', 0),
-                        'webpage_url': data.get('webpage_url', ''),
-                        'method': 'yt-dlp'
-                    }
-            except Exception as e:
-                print(f"❌ yt-dlp approach failed ({approach}): {str(e)}")
-                continue
+                    
+                    if data and data.get('url'):
+                        print(f"✅ Success with ytsearch fallback")
+                        return {
+                            'url': data['url'],
+                            'title': data.get('title', 'Unknown Title'),
+                            'duration': data.get('duration', 0),
+                            'webpage_url': data.get('webpage_url', ''),
+                            'method': 'yt-dlp (search)'
+                        }
+            except Exception as e2:
+                print(f"❌ ytsearch also failed: {str(e2)}")
+                raise Exception(f"All extraction methods failed")
         
         return None
+        
     except Exception as e:
-        print(f"❌ yt-dlp completely failed: {str(e)}")
-        return None
+        print(f"❌ Complete failure: {str(e)}")
+        raise e
 
-# Audio source class for yt-dlp
+# Audio source class
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
         super().__init__(source, volume)
@@ -218,16 +165,10 @@ class YTDLSource(discord.PCMVolumeTransformer):
     async def from_query(cls, query, *, loop=None):
         loop = loop or asyncio.get_event_loop()
         
-        # Try yt-dlp first
-        data = await get_audio_with_ytdlp(query)
-        
-        # If yt-dlp fails, try Invidious
-        if not data:
-            print("🔄 Falling back to Invidious...")
-            data = await get_youtube_audio_url(query)
+        data = await get_youtube_audio_simple(query)
         
         if not data:
-            raise Exception("ไม่สามารถดึงข้อมูลเพลงได้จากแหล่งข้อมูลใดๆ")
+            raise Exception("Failed to extract audio data")
         
         filename = data['url']
         return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
@@ -244,7 +185,7 @@ def check_queue(ctx, guild_id):
 async def on_ready():
     print(f'✅ {bot.user} has logged in!')
     print(f'✅ Bot is in {len(bot.guilds)} servers')
-    print(f'✅ Using updated yt-dlp configuration')
+    print(f'✅ Using latest yt-dlp configuration')
     await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name="!play"))
 
 @bot.event
@@ -315,21 +256,29 @@ async def play(ctx, *, query):
             error_msg = str(e)
             print(f"❌ Final error: {error_msg}")
             
+            # More helpful error message
+            if "Sign in to confirm" in error_msg:
+                error_display = "YouTube ตรวจพบการใช้งานจากเซิร์ฟเวอร์\nกรุณาลองเพลงอื่นหรือรอสักครู่"
+            elif "Failed to extract" in error_msg:
+                error_display = "YouTube ปรับเปลี่ยนระบบชั่วคราว\nกรุณาลองเพลงอื่นหรือใช้ลิงก์ YouTube โดยตรง"
+            else:
+                error_display = error_msg
+            
             embed = create_embed("❌ เกิดข้อผิดพลาด", 
                 f"ไม่สามารถเล่นเพลงได้\n\n"
-                f"**รายละเอียด:** {error_msg}\n\n"
-                f"**โปรดลอง:**\n"
-                f"• ใช้คำค้นหาที่แตกต่าง\n"
-                f"• ลองลิงก์ YouTube โดยตรง\n"
-                f"• รอสักครู่แล้วลองใหม่\n"
-                f"• ติดต่อผู้พัฒนาหากปัญหายังคงมี", 0xff0000)
+                f"**สาเหตุ:** {error_display}\n\n"
+                f"**วิธีแก้ไข:**\n"
+                f"• ลองเพลงอื่น\n"
+                f"• ใช้ลิงก์ YouTube โดยตรง\n"
+                f"• รอ 5-10 นาทีแล้วลองใหม่\n"
+                f"• ลองค้นหาด้วยชื่อเพลงแทนลิงก์", 0xff0000)
             await ctx.send(embed=embed)
 
 @bot.command()
 async def status(ctx):
     """แสดงสถานะบอท"""
     embed = create_embed("📊 สถานะบอท", 
-        f"**แหล่งข้อมูลหลัก:** yt-dlp + Invidious Fallback\n"
+        f"**สถานะ:** {'✅ ทำงานปกติ' if bot.is_ready() else '❌ มีปัญหา'}\n"
         f"**เซิร์ฟเวอร์:** {len(bot.guilds)}\n"
         f"**พิง:** {round(bot.latency * 1000)}ms\n"
         f"**คิวเพลง:** {sum(len(q) for q in queues.values())} เพลง", 0x0099ff)
@@ -480,6 +429,5 @@ if __name__ == "__main__":
         print("💡 ไปที่ Railway Dashboard → Variables → Add DISCORD_TOKEN")
     else:
         print("🎵 เริ่มต้นบอทเพลง Discord บน Railway...")
-        print(f"✅ ใช้ yt-dlp เป็นแหล่งข้อมูลหลัก")
-        print(f"✅ มี Invidious เป็น fallback")
+        print("✅ ใช้ yt-dlp การตั้งค่าล่าสุด")
         bot.run(token)
