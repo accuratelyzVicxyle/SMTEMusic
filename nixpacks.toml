@@ -1,14 +1,16 @@
 [phases.setup]
 cmds = [
     "apt-get update",
-    "apt-get install -y python3-pip ffmpeg",
-    "pip3 --version"
+    "apt-get install -y ffmpeg python3-pip python3-venv"
 ]
 
 [phases.install]
 cmds = [
-    "pip3 install -r requirements.txt"
+    "python3 -m pip install --user -r requirements.txt"
 ]
 
 [start]
 cmd = "python3 main.py"
+
+[environment]
+PATH = "/root/.local/bin:$PATH"
